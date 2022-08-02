@@ -14,11 +14,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-# initial values for function fit: oscillation frequency=2, amplitude, linear
-# background and phase all initially equal to zero.
-p0 = [0, 2, 0, 0]
-
-
 def lighten_color(color, amount=0.5):
     """
     Lightens the given color by multiplying (1-luminosity) by the given amount.
@@ -98,7 +93,7 @@ def test_func(x, a, b, c, d):
     return a * np.cos(b * x + c) + d
 
 
-def getPhase(data):
+def getPhase(data, p0=[0, 2, 0, 0]):
     """
     fit the data and extract the phase. Use the parameters from the previous
     fit (p0) as the starting point for the fit.
@@ -107,23 +102,26 @@ def getPhase(data):
     ==========
     data: np.array of length 16
         sideband yield as a function of time delay
+    p0: list of floats of length 4
+        initial values for curve fit: [amplitude, frequency, phase, background]
     """
     from scipy.optimize import curve_fit
-    global p0
-    bounds = ([-np.inf, 1.99, -1.5*np.pi, -np.inf],
-              [np.inf, 2.01, 1.5*np.pi, np.inf])
-    phase_delays = [i*np.pi/8 for i in range(16)]
-    params, params_covariance = curve_fit(test_func, np.array(phase_delays),
-                                          data, p0=p0,
-                                          bounds=bounds,
-                                          maxfev=1e8, ftol=1e-14)
-    p0 = [x for x in params]
+
     # if the phase is getting large and positive, shift the starting point for
     # the next fit to keep things from getting stuck
     if p0[2] > 1.2:
         p0[2] = p0[2] - np.pi
 
-    return params[2]
+    bounds = ([-np.inf, 1.99, -1.5*np.pi, -np.inf],
+              [np.inf, 2.01, 1.5*np.pi, np.inf])
+
+    phase_delays = [i*np.pi/8 for i in range(16)]
+
+    params, params_covariance = curve_fit(test_func, np.array(phase_delays),
+                                          data, p0=p0,
+                                          bounds=bounds,
+                                          maxfev=1e8, ftol=1e-14)
+    return params
 
 
 def extract_phase(Psi_phi, refangle):
@@ -152,20 +150,21 @@ def extract_phase(Psi_phi, refangle):
     phase = []
     ratio = []
 
+    p0 = [0, 2, 0, 0]
     for ii in range(0, 360):
-        phs = getPhase(y14[:, ii])
-        phase.append(1/np.pi*phs)
+        p0 = getPhase(y14[:, ii], p0=p0)
+        phase.append(1/np.pi*p0[2])
         ratio.append(sum(y14[:, ii]) / maxyield)
 
-    phs = getPhase(y14[:, 0])
+    p0 = getPhase(y14[:, 0], p0=p0)
     # recalculate the phase at 0 degrees using the previous fit parameters
-    phase[0] = (1/np.pi*phs)
+    phase[0] = (1/np.pi*p0[2])
     refphase = phase[refangle]
     phase = [p-refphase for p in phase]
     return phase, ratio
 
 
-def plots(phi, rat, args):
+def plot_phase(phi, ratio, args):
     x = np.linspace(0, 2*np.pi, 360)
     if args["polar"]:
         fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
@@ -183,14 +182,72 @@ def plots(phi, rat, args):
         plt.show()
 
 
-args = read_command_line()
+def PADphase():
+    args = read_command_line()
 
-Psi_phi = pd.read_csv(args['file'], index_col=0)
-Psi_phi = trim_dataframe_to_sb(Psi_phi, args['sb'], args['ip'])
+    Psi_phi = pd.read_csv(args['file'], index_col=0)
+    Psi_phi = trim_dataframe_to_sb(Psi_phi, args['sb'], args['ip'])
 
-phi, rat = extract_phase(Psi_phi, args["angle"])
-ratio = [ii/max(rat) for ii in rat]
-x = np.linspace(0, 2*np.pi, 360)
-np.savetxt(args["output"], np.column_stack((x, phi)))
+    phi, rat = extract_phase(Psi_phi, args["angle"])
+    ratio = [ii/max(rat) for ii in rat]
+    x = np.linspace(0, 2*np.pi, 360)
+    np.savetxt(args["output"], np.column_stack((x, phi)))
 
-plots(phi, rat, args)
+    plot_phase(phi, ratio, args)
+
+
+def plot_momentum(Psi, momenta):
+    import matplotlib.pyplot as plt
+    from matplotlib import cm
+    phi = np.linspace(0, 360, num=360, endpoint=True)
+    angle = np.radians(-phi)
+    theta, r = np.meshgrid(angle, momenta)
+    plt.figure(1, figsize=(8, 9))
+    ax = plt.subplot(polar=True)
+    ax.set_theta_zero_location("E")
+    lup = 1.01*np.amax(Psi)
+    levels = np.linspace(0.0, lup, 200)
+    CS = plt.contourf(theta, r, Psi, levels, cmap=cm.jet)
+    ax.set_rmax(1.0)
+    rlabels = ax.get_ymajorticklabels()
+    for label in rlabels:
+        label.set_color('white')
+    ax.set_rlabel_position(135)
+    ax.tick_params(labelsize=10, direction='in')
+    thetaticks = np.arange(0, 360, 45)
+    ax.set_thetagrids(thetaticks)  # ,frac=1.15)
+    cbar = plt.colorbar(CS)
+    cbar.ax.tick_params(labelsize=10)
+    ax.set_xlabel('$p_{y}$', size=20)
+    ax.set_ylabel('$p_{z}$', size=20)
+    ax.yaxis.set_label_coords(-0.05, 0.52)
+    plt.show()
+
+
+def select_dist(fullPsi, sel=None):
+    """ If selection sel=None, then overlay all time delays. Otherwise select
+    specific time delay(sel=0,..15) chooses one of the sixteen time delays
+    """
+    fullPsi = np.transpose(fullPsi.values)
+
+    if not(sel):
+        Psi = 0
+        for ii in range(16):
+            Psi += fullPsi[:, ii*360:(ii+1)*360]
+    else:
+        Psi = fullPsi[:, sel*360:(sel+1)*360]
+    return(Psi)
+
+
+def PADamp():
+    args = read_command_line()
+
+    fullPsi = pd.read_csv(args['file'], index_col=0)
+    momenta = [float(x) for x in fullPsi.columns]
+
+    Psi = select_dist(fullPsi, sel=0)
+    plot_momentum(Psi, momenta)
+
+
+if __name__ == "__main__":
+    PADamp()
