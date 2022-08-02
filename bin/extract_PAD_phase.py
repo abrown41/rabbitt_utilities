@@ -31,8 +31,8 @@ def lighten_color(color, amount=0.5):
 def read_command_line():
     from argparse import ArgumentParser as AP
     parser = AP()
-    parser.add_argument('files', nargs="+",
-                        help="list of OuterWave_momentum files ")
+    parser.add_argument('file',
+                        help="OuterWave_momentum file")
     parser.add_argument('-p', '--plot',
                         help="display a plot of the extracted phase",
                         default=False, action='store_true')
@@ -60,16 +60,18 @@ args = read_command_line()
 Ip = args['ip']
 sb = args['sb']
 
-photon_energy = 0.06          # in a.u.
-sb_width = 0.01              # sideband will be summed over the range sb_energy ± sb_width
+photon_energy = 0.06  # in a.u.
+sb_width = 0.01       # sideband will be summed over the range sb_energy ± sb_width
 
 # PARAMETERS from RMT
 rskip = args["rskip"]
 del_r = 0.08              # grid spacing
+
+Psi_phi = np.loadtxt(args['file'])
 # number of outer region points minus the first 200 a.u worth of points (200 is the default in reform)
 Nt = 64488-int(rskip/del_r)
 # number of momentum values per angle in the OuterWave_momentum.* files
-Nr = 800
+Nr = Psi_phi.shape[1]
 
 #########################################################
 p0 = [0, 2, 0, 0]
@@ -142,20 +144,11 @@ def get_yield(data, sb_indices, zeniths):
     return (nsum)
 
 
-def extract_phase(flist, refangle):
+def extract_phase(Psi_phi, refangle):
     """
     load the momentum distribution, then for each angle extract the phase. 
     """
 
-    if [len(flist) == 1]:  # if data has been preformatted into a single file
-        Psi_phi = np.loadtxt(flist[0])
-    else:  # otherwise data is housed in separate files
-        Psi_phi = np.array([])
-        for fname in flist:
-            tmp_phi = np.loadtxt(fname)
-            # remove the last, repeated row (360° == 0°)
-            Psi_phi = np.append(Psi_phi, tmp_phi[:-1])
-    Psi_phi = np.reshape(Psi_phi, (16*360, Nr))
     Psi = np.transpose(Psi_phi)
 
     plt.plot(zeniths, Psi[:, 0], 'r')
@@ -197,7 +190,7 @@ def extract_phase(flist, refangle):
 
 
 args = read_command_line()
-x, phi, ratio = extract_phase(args["files"], args["angle"])
+x, phi, ratio = extract_phase(Psi_phi, args["angle"])
 rat = [ii/max(ratio) for ii in ratio]
 ratio = [a for a in rat]
 np.savetxt(args["output"], np.column_stack((x, phi)))
