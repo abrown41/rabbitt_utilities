@@ -1,11 +1,22 @@
+"""
+Utility for extracting the sideband phase as a function of emission angle for
+angle resolved rabbitt spectra. If command line option -a/--angle is used this
+refers to the skew angle ΘT between the XUV-APT and IR, and the phase is then
+the normalized phase shift Δϕ = ϕ(θ) - ϕ(ΘT).
+
+Parameters for the figures in the paper:
+For Argon: Ip = 0.579 a.u. sb = 14
+For Neon: Ip = 0.793 a.u. sb = 18
+For Helium: Ip = 0.904 a.u. sb =18
+"""
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
-# Argon
-# Ip = 0.579 # in a.u.
-# Neon
-#Ip = 0.79245
-# sb = 14    # sideband number
+import pandas as pd
+
+
+# initial values for function fit: oscillation frequency=2, amplitude, linear
+# background and phase all initially equal to zero.
+p0 = [0, 2, 0, 0]
 
 
 def lighten_color(color, amount=0.5):
@@ -44,11 +55,9 @@ def read_command_line():
                         default="phase.txt")
     parser.add_argument('-a', '--angle', type=int,
                         help="skew angle", default=0)
-    parser.add_argument('-r', '--rskip', type=int,
-                        help="rskip parameter", default=200)
     parser.add_argument('-i', '--ip', type=float,
                         help="ionisation energy in a.u. (default He)",
-                        default=0.903569)
+                        default=0.904)
     parser.add_argument('-s', '--sb', type=int,
                         help="sideband index",
                         default=18)
@@ -56,113 +65,82 @@ def read_command_line():
     return vars(parser.parse_args())
 
 
-args = read_command_line()
-Ip = args['ip']
-sb = args['sb']
+def mom_to_energy(Ip, mom):
+    """ given an ionisation energy and a list of equally spaced photoelectron
+    momentum values, convert those values to photoelectron energies. All values
+    assumed to be in atomic units"""
+    factor = mom[1] - mom[0]
+    zeniths = np.zeros(len(mom))
+    for ll in range(0, len(mom)):
+        zeniths[ll] = Ip+0.5*ll*ll*factor*factor
+    return zeniths
 
-photon_energy = 0.06  # in a.u.
-sb_width = 0.01       # sideband will be summed over the range sb_energy ± sb_width
 
-# PARAMETERS from RMT
-rskip = args["rskip"]
-del_r = 0.08              # grid spacing
+def trim_dataframe_to_sb(Psi_phi, sb, Ip):
+    """given a dataframe containing the photoelectron momenta, select only the
+    energies which lie within the given sideband. Assumes the photon energy is
+    0.06 a.u and the sideband is 0.01 a.u wide"""
+    photon_energy = 0.06  # in a.u.
+    sb_width = 0.01       # sideband summed over the range sb_energy ± sb_width
+    sb_energy = sb*photon_energy  # energy of the sideband in a.u
+    sb_lo = sb_energy - sb_width
+    sb_hi = sb_energy + sb_width
 
-Psi_phi = np.loadtxt(args['file'])
-# number of outer region points minus the first 200 a.u worth of points (200 is the default in reform)
-Nt = 64488-int(rskip/del_r)
-# number of momentum values per angle in the OuterWave_momentum.* files
-Nr = Psi_phi.shape[1]
-
-#########################################################
-p0 = [0, 2, 0, 0]
-lb = -1.5*np.pi
-ub = 1.5*np.pi
-
-sb_energy = sb*photon_energy  # energy of the sideband in a.u
-# use Nt ie total no.of points to get factor=dk
-factor = (2.0*np.pi)/(del_r*Nt)
-zeniths = np.zeros(Nr)
-for l in range(0, Nr):
-    zeniths[l] = Ip+0.5*l*l*factor*factor  # convert from momentum to energy
-
-# Build the list of indices which lie within the energy range of the sideband
-sb_indices = []
-for jj in range(len(zeniths)):
-    zz = zeniths[jj]
-    if np.abs(sb_energy-zz) < sb_width:
-        sb_indices.append(jj)
+    momenta = [float(x) for x in Psi_phi.columns]
+    energies = mom_to_energy(Ip, momenta)
+    filt = [(float(x) > sb_lo and float(x) < sb_hi) for x in energies]
+    Psi_phi = Psi_phi.loc[:, filt]
+    return Psi_phi
 
 
 def test_func(x, a, b, c, d):
+    """function with which to fit the sideband oscillation"""
     return a * np.cos(b * x + c) + d
 
 
-def getPhase(data, angle=0, maxyield=10000):
+def getPhase(data):
     """
-    fit the data and extract the phase
+    fit the data and extract the phase. Use the parameters from the previous
+    fit (p0) as the starting point for the fit.
+
+    Parameters
+    ==========
+    data: np.array of length 16
+        sideband yield as a function of time delay
     """
-    global p0, lb, ub
-    rat = sum(data) / maxyield
-#    print (sum(data), maxyield, sum(data) < 0.01*maxyield)
-#    if sum(data) < 0.01*maxyield:
-#        return -3.0
-#    data *= 1e8
+    from scipy.optimize import curve_fit
+    global p0
+    bounds = ([-np.inf, 1.99, -1.5*np.pi, -np.inf],
+              [np.inf, 2.01, 1.5*np.pi, np.inf])
     phase_delays = [i*np.pi/8 for i in range(16)]
     params, params_covariance = curve_fit(test_func, np.array(phase_delays),
                                           data, p0=p0,
-                                          bounds=(
-                                              [-np.inf, 1.99, lb, -np.inf], [np.inf, 2.01, ub, np.inf]),
+                                          bounds=bounds,
                                           maxfev=1e8, ftol=1e-14)
     p0 = [x for x in params]
+    # if the phase is getting large and positive, shift the starting point for
+    # the next fit to keep things from getting stuck
+    if p0[2] > 1.2:
+        p0[2] = p0[2] - np.pi
 
-#    if angle == 0:
-#        plt.plot(phase_delays, test_func(np.array(phase_delays), *params), 'r',
-#                 label="0")
-#        plt.plot(phase_delays, data,'ro')
-#    if angle > 0 and angle < 20:
-#        plt.plot(phase_delays, test_func(np.array(phase_delays), *params), 'b',
-#                 label="fit")
-#        plt.plot(phase_delays, data,'bo', label="data")
-#        plt.title(f"Emission angle: {angle}$^{{\circ}}$")
-#        plt.legend()
-#        plt.savefig(f"{angle}.png")
-#        plt.close()
-
-    return rat, params[2]
-
-
-def get_yield(data, sb_indices, zeniths):
-    """
-    sum the contribution of data[ii] for ii in sb_indices
-    """
-    nsum = 0
-    fac = [1 for _ in sb_indices]
-    fac[0] = 0.5
-    fac[-1] = 0.5
-    for jj, ii in enumerate(sb_indices):
-        nsum += fac[jj]*data[ii]*0.5*(zeniths[ii-1]+zeniths[ii+1])
-    return (nsum)
+    return params[2]
 
 
 def extract_phase(Psi_phi, refangle):
     """
-    load the momentum distribution, then for each angle extract the phase. 
+    extract the sideband phase along each radial direction (0-360 degrees).
+    Then subtract the phase at refangle to give.
     """
 
-    Psi = np.transpose(Psi_phi)
+    Psi = np.transpose(Psi_phi.values)
 
-    plt.plot(zeniths, Psi[:, 0], 'r')
-    for ii in sb_indices:
-        plt.plot(zeniths[ii], Psi[ii, 0], 'b.')
-
-    plt.show()
-    plt.close()
     yield14 = []
+    # extract the sideband yield at each angle for each time delay
     for ii in range(16):
         tempyield = []
         tempsi = Psi[:, ii*360:(ii+1)*360]
         for jj in range(360):
-            tempyield.append(get_yield(tempsi[:, jj], sb_indices, zeniths))
+            tempyield.append(np.sum(tempsi[:, jj]))
 
         yield14.append(tempyield)
 
@@ -175,37 +153,44 @@ def extract_phase(Psi_phi, refangle):
     ratio = []
 
     for ii in range(0, 360):
-        rat, phs = getPhase(y14[:, ii], angle=ii, maxyield=maxyield)
+        phs = getPhase(y14[:, ii])
         phase.append(1/np.pi*phs)
-        ratio.append(rat)
+        ratio.append(sum(y14[:, ii]) / maxyield)
 
-    rat, phs = getPhase(y14[:, 0], angle=0, maxyield=maxyield)
+    phs = getPhase(y14[:, 0])
+    # recalculate the phase at 0 degrees using the previous fit parameters
     phase[0] = (1/np.pi*phs)
-    ratio[0] = rat
-    angles = np.linspace(0, 2*np.pi, 360)
     refphase = phase[refangle]
-#    refphase = 0
     phase = [p-refphase for p in phase]
-    return angles, phase, ratio
+    return phase, ratio
+
+
+def plots(phi, rat, args):
+    x = np.linspace(0, 2*np.pi, 360)
+    if args["polar"]:
+        fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
+        for ang, phs, rat in zip(x, phi, ratio):
+            ax.plot(ang, phs, '.', color=lighten_color('b', 2*rat))
+        ax.set_theta_zero_location("S")
+        ax.set_ylim([-1.2, 0.4])
+        plt.title('$\Theta_T =$' + f'{args["angle"]}°')
+        plt.savefig(f'{args["angle"]}')
+        plt.show()
+    elif args["plot"]:
+        plt.plot(x, phi)
+        plt.xlabel("θ(°)")
+        plt.ylabel("phase (π radians)")
+        plt.show()
 
 
 args = read_command_line()
-x, phi, ratio = extract_phase(Psi_phi, args["angle"])
-rat = [ii/max(ratio) for ii in ratio]
-ratio = [a for a in rat]
+
+Psi_phi = pd.read_csv(args['file'], index_col=0)
+Psi_phi = trim_dataframe_to_sb(Psi_phi, args['sb'], args['ip'])
+
+phi, rat = extract_phase(Psi_phi, args["angle"])
+ratio = [ii/max(rat) for ii in rat]
+x = np.linspace(0, 2*np.pi, 360)
 np.savetxt(args["output"], np.column_stack((x, phi)))
 
-if args["polar"]:
-    fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
-    for ang, phs, rat in zip(x, phi, ratio):
-        ax.plot(ang, phs, '.', color=lighten_color('b', 2*rat))
-    ax.set_theta_zero_location("S")
-    ax.set_ylim([-1.2, 0.4])
-    plt.title(f'{args["angle"]}')
-    plt.savefig(f'{args["angle"]}')
-    plt.show()
-elif args["plot"]:
-    plt.plot(x, phi)
-    plt.xlabel("θ(°)")
-    plt.ylabel("phase (π radians)")
-    plt.show()
+plots(phi, rat, args)
