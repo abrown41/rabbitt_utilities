@@ -249,5 +249,41 @@ def PADamp():
     plot_momentum(Psi, momenta)
 
 
+def integrateOverAngle(Psi):
+    nsum = 0
+    for angle in range(360):
+        nsum += Psi[:, angle]
+    nsum *= np.pi/180
+    return nsum
+
+
+def plot_rabbit(matdat, energies):
+    from matplotlib.image import NonUniformImage
+    xaxis = np.linspace(0, 2*np.pi, 16)
+
+    fig, ax = plt.subplots(nrows=1, ncols=1)
+    im = NonUniformImage(ax, interpolation='nearest')
+    im.set_data(xaxis, energies*27.212, matdat)
+    ax.images.append(im)
+    ax.set_xlim(0, 2*np.pi)
+    ax.set_ylim(0, 20)
+    ax.set_xlabel('phase delay IR-XUV (rad)')
+    ax.set_ylabel('Photon Energy (eV)')
+    plt.show()
+
+
+def rabbitt():
+    args = read_command_line()
+    fullpsi = pd.read_csv(args['file'], index_col=0)
+    Psi_phi = np.transpose(fullpsi.values)
+    momenta = [float(x) for x in fullpsi.columns]
+    energies = mom_to_energy(0.0, momenta)
+    matdat = np.zeros((len(energies), 16))
+    for td in range(16):
+        matdat[:, td] = integrateOverAngle(Psi_phi[:, td*360:(td+1)*360])
+    plot_rabbit(matdat, energies)
+
+
+
 if __name__ == "__main__":
-    PADamp()
+    rabbitt()
