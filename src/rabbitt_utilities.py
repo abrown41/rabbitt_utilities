@@ -405,7 +405,7 @@ def pwPhase(args):
     pwPhase = []
 
     pwPhase.append(PADphase(args))
-    if type(pwPhase[0] == str):
+    if type(pwPhase[0]) == str:
         print(pwPhase[0])
         return
 
