@@ -1,10 +1,13 @@
 """
-Utility for extracting the sideband phase as a function of emission angle for
-angle resolved rabbitt spectra. If command line option -a/--angle is used this
-refers to the skew angle ΘT between the XUV-APT and IR, and the phase is then
-the normalized phase shift Δϕ = ϕ(θ) - ϕ(ΘT).
+Utilities for working with photoelectron angular momentum distributions from
+RMT-calculations and experiment as part of the "Atomic partial wave meter by
+attosecond coincidence metrology" paper by W. Jiang et al. Nat. Comms. 2022.
 
-Parameters for the figures in the paper:
+All code written by Andrew C. Brown 2022.
+
+For certain functions, the ionisation potential in a.u needs to be provided as
+an input argument (--ip). For others, the sideband index needs to be specified.
+The parameters for the figures in the paper are:
 For Argon: Ip = 0.579 a.u. sb = 14
 For Neon: Ip = 0.793 a.u. sb = 18
 For Helium: Ip = 0.904 a.u. sb =18
@@ -47,9 +50,9 @@ def read_command_line():
                         default=False, action='store_true')
     parser.add_argument('-o', '--output', type=str,
                         help="file for phase to be stored",
-                        default="phase.txt")
-    parser.add_argument('-a', '--angle', type=int,
-                        help="skew angle", default=0)
+                        default="dontsaveme.txt")
+    parser.add_argument('-a', '--angle',
+                        help="skew angle", default=None)
     parser.add_argument('-i', '--ip', type=float,
                         help="ionisation energy in a.u. (default He)",
                         default=0.904)
@@ -74,7 +77,24 @@ def mom_to_energy(Ip, mom):
 def trim_dataframe_to_sb(Psi_phi, sb, Ip):
     """given a dataframe containing the photoelectron momenta, select only the
     energies which lie within the given sideband. Assumes the photon energy is
-    0.06 a.u and the sideband is 0.01 a.u wide"""
+    0.06 a.u and the sideband is 0.01 a.u wide
+    Parameters
+    ==========
+    Psi_phi: pd.DataFrame
+        dataframe containing the photoelectron momenta. Each column corresponds
+        to a specific momentum.
+    sb: int
+        the sideband index of interest
+    Ip: float
+        the ionisation energy. This is required to ensure the energy is
+        calculated relative to the neutral ground state.
+
+    Returns
+    =======
+    Psi_Phi: pd.DataFrame
+        dataframe containing the photoelectron momenta limited to energies
+        within the sideband of interest.
+    """
     photon_energy = 0.06  # in a.u.
     sb_width = 0.01       # sideband summed over the range sb_energy ± sb_width
     sb_energy = sb*photon_energy  # energy of the sideband in a.u
@@ -104,6 +124,11 @@ def getPhase(data, p0=[0, 2, 0, 0]):
         sideband yield as a function of time delay
     p0: list of floats of length 4
         initial values for curve fit: [amplitude, frequency, phase, background]
+
+    Returns
+    =======
+    params : list of length 4
+        fit parameters [amplitude, frequency, phase, background]
     """
     from scipy.optimize import curve_fit
 
@@ -124,10 +149,28 @@ def getPhase(data, p0=[0, 2, 0, 0]):
     return params
 
 
-def extract_phase(Psi_phi, refangle):
+def extract_phase(Psi_phi, refangle=None):
     """
     extract the sideband phase along each radial direction (0-360 degrees).
     Then subtract the phase at refangle to give.
+
+    Parameters
+    ==========
+    Psi_phi : pd.DataFrame
+        dataframe containing the photoelectron momenta limited to energies
+        within the sideband of interest.
+    refangle : float or int
+        skew angle ΘT between the XUV-APT and IR, If provided then the
+        phase is the normalized phase shift Δϕ = ϕ(θ) - ϕ(ΘT).
+
+    Returns
+    =======
+    phase : list of 360 floats
+        the sideband phase extracted from the fit to the rabbitt data along
+        each emission angle
+    relative_yield: list of 360 floats
+        the yield as a fraction of the maximum yield of the sideband along each
+        emission angle
     """
 
     Psi = np.transpose(Psi_phi.values)
@@ -146,6 +189,8 @@ def extract_phase(Psi_phi, refangle):
     maxyield = 0
     for ii in range(360):
         maxyield = max(maxyield, sum(y14[:, ii]))
+    if abs(maxyield) < 1e-13:
+        return None, None
 
     phase = []
     ratio = []
@@ -159,12 +204,30 @@ def extract_phase(Psi_phi, refangle):
     p0 = getPhase(y14[:, 0], p0=p0)
     # recalculate the phase at 0 degrees using the previous fit parameters
     phase[0] = (1/np.pi*p0[2])
-    refphase = phase[refangle]
-    phase = [p-refphase for p in phase]
-    return phase, ratio
+    if refangle:
+        refangle = int(refangle)
+        refphase = phase[refangle]
+        phase = [p-refphase for p in phase]
+    relative_yield = [ii/max(ratio) for ii in ratio]
+    return phase, relative_yield
 
 
 def plot_phase(phi, ratio, args):
+    """ show the extracted sideband phase as a function of emission angle as
+    either a polar or cartesian plot. If polar, weight the colour of the plotted
+    phase by the yield.
+
+    Parameters
+    ==========
+    phi : list of 360 floats
+        the sideband phase extracted from the fit to the rabbitt data along
+        each emission angle
+    ratio: list of 360 floats
+        the yield as a fraction of the maximum yield of the sideband along each
+        emission angle
+    args: dict
+        command line arguments used to specify plot parameters
+    """
     x = np.linspace(0, 2*np.pi, 360)
     if args["polar"]:
         fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
@@ -182,21 +245,51 @@ def plot_phase(phi, ratio, args):
         plt.show()
 
 
-def PADphase():
-    args = read_command_line()
+def PADphase(args):
+    """
+    Utility for extracting the sideband phase as a function of emission angle
+    for angle resolved rabbitt spectra. If command line option -a/--angle is
+    used this refers to the skew angle ΘT between the XUV-APT and IR, and the
+    phase is then the normalized phase shift Δϕ = ϕ(θ) - ϕ(ΘT).
+
+    Parameters
+    ==========
+    args: dict
+        command line arguments
+
+    Returns
+    =======
+    phase : float
+        extracted phase averaged over all emission angles (used for partial
+        wave data where the phase is constant over emission angles)
+    """
 
     Psi_phi = pd.read_csv(args['file'], index_col=0)
     Psi_phi = trim_dataframe_to_sb(Psi_phi, args['sb'], args['ip'])
 
-    phi, rat = extract_phase(Psi_phi, args["angle"])
-    ratio = [ii/max(rat) for ii in rat]
-    x = np.linspace(0, 2*np.pi, 360)
-    np.savetxt(args["output"], np.column_stack((x, phi)))
+    phi, ratio = extract_phase(Psi_phi, args["angle"])
+    if (phi):
+        if args["output"] != "dontsaveme.txt":
+            x = np.linspace(0, 2*np.pi, 360)
+            np.savetxt(args["output"], np.column_stack((x, phi)))
 
-    plot_phase(phi, ratio, args)
+        plot_phase(phi, ratio, args)
+        return np.average(phi)
+    else:
+        return f"No yield in sideband {args['sb']} for file {args['file']}"
 
 
 def plot_momentum(Psi, momenta):
+    """Show a polar plot of the photoelectron angular momentum distribution.
+
+    Parameters
+    ==========
+    Psi: np.array of size (:, 360)
+        Photoelectron momentum for each emission angle
+    momenta: list of floats
+        Photoelectron momentum values corresponding to the first axis of Psi
+    """
+
     import matplotlib.pyplot as plt
     from matplotlib import cm
     phi = np.linspace(0, 360, num=360, endpoint=True)
@@ -239,9 +332,9 @@ def select_dist(fullPsi, sel=None):
     return(Psi)
 
 
-def PADamp():
-    args = read_command_line()
-
+def PADamp(args):
+    """Read Photoelectron angular momentum distribution from file and plot it
+    """
     fullPsi = pd.read_csv(args['file'], index_col=0)
     momenta = [float(x) for x in fullPsi.columns]
 
@@ -250,14 +343,35 @@ def PADamp():
 
 
 def integrateOverAngle(Psi):
+    """Integrate the photoelectron angular momentum distribution over all
+    emission angles.
+    Parameters
+    ==========
+    Psi: np.array of size (:, 360)
+        Photoelectron momentum for each emission angle
+
+    Returns
+    =======
+    nsum : np.array of size(:)
+        Integrated photoelectron momentum (radial distribution)
+    """
     nsum = 0
-    for angle in range(360):
-        nsum += Psi[:, angle]
+    for angle in range(180):
+        nsum += Psi[:, angle] * np.pi * 2 * np.sin(np.radians(angle))
     nsum *= np.pi/180
     return nsum
 
 
 def plot_rabbit(matdat, energies):
+    """Show a colour plot of the rabbitt spectrum
+
+    Parameters
+    ==========
+    matdat : np.ndarray of size(num_energies, num_time_delays)
+        rabbitt spectrum
+    energies: np.array
+        photoelectron energies corresponding to axis-0 of matdat
+    """
     from matplotlib.image import NonUniformImage
     xaxis = np.linspace(0, 2*np.pi, 16)
 
@@ -272,8 +386,9 @@ def plot_rabbit(matdat, energies):
     plt.show()
 
 
-def rabbitt():
-    args = read_command_line()
+def rabbitt(args):
+    """Read momentum distribution from file, integrate over angle, and plot the
+    rabbitt spectrum"""
     fullpsi = pd.read_csv(args['file'], index_col=0)
     Psi_phi = np.transpose(fullpsi.values)
     momenta = [float(x) for x in fullpsi.columns]
@@ -284,6 +399,25 @@ def rabbitt():
     plot_rabbit(matdat, energies)
 
 
+def pwPhase(args):
+    """read partial wave momentum distributions and calculate the absolute or
+    relative phase associated with that partial wave"""
+    pwPhase = []
+
+    pwPhase.append(PADphase(args))
+    if type(pwPhase[0] == str):
+        print(pwPhase[0])
+        return
+
+    refwave = input(
+        "Enter the reference-wave csv filename (blank for absolute phase): ")
+    if (refwave != ""):
+        args["file"] = refwave
+        pwPhase.append(PADphase(args))
+        print(f"Relative phase: {pwPhase[0]-pwPhase[1]}")
+    else:
+        print(f"Absolute phase: {pwPhase[0]}")
+
 
 if __name__ == "__main__":
-    rabbitt()
+    pass
