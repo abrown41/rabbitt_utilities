@@ -203,7 +203,12 @@ def extract_phase(Psi_phi, refangle=None):
 
     p0 = getPhase(y14[:, 0], p0=p0)
     # recalculate the phase at 0 degrees using the previous fit parameters
-    phase[0] = (1/np.pi*p0[2])
+    phase = []
+    ratio = []
+    for ii in range(0, 360):
+        p0 = getPhase(y14[:, ii], p0=p0)
+        phase.append(1/np.pi*p0[2])
+        ratio.append(sum(y14[:, ii]) / maxyield)
     if refangle:
         refangle = int(refangle)
         refphase = phase[refangle]
@@ -264,7 +269,7 @@ def PADphase(args):
         wave data where the phase is constant over emission angles)
     """
 
-    Psi_phi = pd.read_csv(args['file'], index_col=0)
+    Psi_phi = pd.read_csv(args['file'])
     Psi_phi = trim_dataframe_to_sb(Psi_phi, args['sb'], args['ip'])
 
     phi, ratio = extract_phase(Psi_phi, args["angle"])
@@ -301,7 +306,7 @@ def plot_momentum(Psi, momenta):
     lup = 1.01*np.amax(Psi)
     levels = np.linspace(0.0, lup, 200)
     CS = plt.contourf(theta, r, Psi, levels, cmap=cm.jet)
-    ax.set_rmax(1.0)
+    ax.set_rmax(2.0)
     rlabels = ax.get_ymajorticklabels()
     for label in rlabels:
         label.set_color('white')
