@@ -98,13 +98,22 @@ def trim_dataframe_to_sb(Psi_phi, sb, Ip):
     photon_energy = 0.06  # in a.u.
     sb_width = 0.01       # sideband summed over the range sb_energy ± sb_width
     sb_energy = sb*photon_energy  # energy of the sideband in a.u
-    sb_lo = sb_energy - sb_width
+    sb_lo = sb_energy - 2*sb_width
     sb_hi = sb_energy + sb_width
 
     momenta = [float(x) for x in Psi_phi.columns]
     energies = mom_to_energy(Ip, momenta)
     filt = [(float(x) > sb_lo and float(x) < sb_hi) for x in energies]
+    ens = list(filter(lambda x: float(x) > sb_lo and float(x) < sb_hi, energies))
+
     Psi_phi = Psi_phi.loc[:, filt]
+    yy = []
+    for ii in range(16):
+        yy.append(np.sum(Psi_phi.iloc[ii*360+55]))
+        plt.plot(ens, Psi_phi.iloc[ii*360+55])
+        plt.ylim([0,3e-5])
+        plt.show()
+    plt.plot(np.arange(16),yy)
     return Psi_phi
 
 
@@ -113,7 +122,7 @@ def test_func(x, a, b, c, d):
     return a * np.cos(b * x + c) + d
 
 
-def getPhase(data, p0=[0, 2, 0, 0]):
+def getPhase(data, p0=[0, 2, 0, 0], ang=0):
     """
     fit the data and extract the phase. Use the parameters from the previous
     fit (p0) as the starting point for the fit.
@@ -134,11 +143,11 @@ def getPhase(data, p0=[0, 2, 0, 0]):
 
     # if the phase is getting large and positive, shift the starting point for
     # the next fit to keep things from getting stuck
-    if p0[2] > 1.2:
-        p0[2] = p0[2] - np.pi
+#    if p0[2] > 1.2:
+#        p0[2] = p0[2] - np.pi
 
-    bounds = ([-np.inf, 1.99, -1.5*np.pi, -np.inf],
-              [np.inf, 2.01, 1.5*np.pi, np.inf])
+    bounds = ([-np.inf, 1.99, -2.0*np.pi, -np.inf],
+              [np.inf, 2.01, 2.0*np.pi, np.inf])
 
     phase_delays = [i*np.pi/8 for i in range(16)]
 
@@ -146,6 +155,11 @@ def getPhase(data, p0=[0, 2, 0, 0]):
                                           data, p0=p0,
                                           bounds=bounds,
                                           maxfev=1e8, ftol=1e-14)
+#    if ang !=0:
+#        plt.plot(phase_delays, data, 'r.')
+#        plt.plot(phase_delays, test_func(np.array(phase_delays), *params))
+#        plt.title(ang)
+#        plt.show()
     return params
 
 
@@ -202,13 +216,13 @@ def extract_phase(Psi_phi, refangle=None):
         ratio.append(sum(y14[:, ii]) / maxyield)
 
     p0 = getPhase(y14[:, 0], p0=p0)
-    # recalculate the phase at 0 degrees using the previous fit parameters
-    phase = []
-    ratio = []
-    for ii in range(0, 360):
-        p0 = getPhase(y14[:, ii], p0=p0)
-        phase.append(1/np.pi*p0[2])
-        ratio.append(sum(y14[:, ii]) / maxyield)
+#     recalculate the phase at 0 degrees using the previous fit parameters
+#    phase = []
+#    ratio = []
+#    for ii in range(0, 360):
+#        p0 = getPhase(y14[:, ii], p0=p0,ang=ii)
+#        phase.append(1/np.pi*p0[2])
+#        ratio.append(sum(y14[:, ii]) / maxyield)
     if refangle:
         refangle = int(refangle)
         refphase = phase[refangle]
@@ -239,7 +253,7 @@ def plot_phase(phi, ratio, args):
         for ang, phs, rat in zip(x, phi, ratio):
             ax.plot(ang, phs, '.', color=lighten_color('b', 2*rat))
         ax.set_theta_zero_location("S")
-        ax.set_ylim([-1.2, 0.4])
+#        ax.set_ylim([-1.2, 0.4])
         plt.title('$\Theta_T =$' + f'{args["angle"]}°')
         plt.savefig(f'{args["angle"]}')
         plt.show()
@@ -270,7 +284,15 @@ def PADphase(args):
     """
 
     Psi_phi = pd.read_csv(args['file'])
+    mom = [float(x) for x in Psi_phi.columns]
+    ens = mom_to_energy(args['ip'], mom)
+    plt.plot(ens, Psi_phi.iloc[55])
     Psi_phi = trim_dataframe_to_sb(Psi_phi, args['sb'], args['ip'])
+    plt.show()
+
+#    import sys
+#    sys.exit()
+
 
     phi, ratio = extract_phase(Psi_phi, args["angle"])
     if (phi):
@@ -303,8 +325,8 @@ def plot_momentum(Psi, momenta):
     plt.figure(1, figsize=(8, 9))
     ax = plt.subplot(polar=True)
     ax.set_theta_zero_location("E")
-    lup = 1.01*np.amax(Psi)
-    levels = np.linspace(0.0, lup, 200)
+#    lup = 1.01*np.amax(Psi)
+    levels = np.linspace(0.0, 0.0011, 200)
     CS = plt.contourf(theta, r, Psi, levels, cmap=cm.jet)
     ax.set_rmax(2.0)
     rlabels = ax.get_ymajorticklabels()
@@ -383,12 +405,53 @@ def plot_rabbit(matdat, energies):
     fig, ax = plt.subplots(nrows=1, ncols=1)
     im = NonUniformImage(ax, interpolation='nearest')
     im.set_data(xaxis, energies*27.212, matdat)
-    ax.images.append(im)
+    ax.add_image(im)
     ax.set_xlim(0, 2*np.pi)
-    ax.set_ylim(0, 20)
+    ax.set_ylim(27.212*energies[0], 27.212*energies[-1])
     ax.set_xlabel('phase delay IR-XUV (rad)')
     ax.set_ylabel('Photon Energy (eV)')
     plt.show()
+
+
+def rabbitt_phase(momenta, matdat, sb, ip=0):
+    """
+    extract sideband phase for the angle integrated spectrum
+
+    Parameters
+    ==========
+    momenta: list of floats
+        Photoelectron momentum values corresponding to the first axis of Psi
+    matdat : np.ndarray
+        of size (num_energies, 16), contains the photoelectron yield at each
+        energy for each time delay
+
+    sb : int
+        sideband of interest
+
+    ip : float
+        ionisation potential (in a.u)
+
+    Returns
+    =======
+    phase : float
+        the sideband phase extracted from the fit to the rabbitt data
+    """
+
+
+    energies = mom_to_energy(ip, momenta)
+    for ii, en in enumerate(energies):
+        if en> sb*0.06-0.01:
+            i_lo = ii
+            break
+    for ii, en in enumerate(energies):
+        if en> sb*0.06+0.01:
+            i_hi = ii
+            break
+    sbyield = []
+    for td in range(16):
+        sbyield.append(np.sum(matdat[i_lo:i_hi, td]))
+
+    return getPhase(sbyield)[2]
 
 
 def rabbitt(args):
@@ -401,7 +464,10 @@ def rabbitt(args):
     matdat = np.zeros((len(energies), 16))
     for td in range(16):
         matdat[:, td] = integrateOverAngle(Psi_phi[:, td*360:(td+1)*360])
-    plot_rabbit(matdat, energies)
+    if args['plot']:
+        plot_rabbit(matdat, energies)
+    phs = rabbitt_phase(momenta, matdat, args['sb'], args['ip'])
+    print(f"Phase for sb{args['sb']} is {phs}")
 
 
 def pwPhase(args):
