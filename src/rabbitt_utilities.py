@@ -5,6 +5,8 @@ attosecond coincidence metrology" paper by W. Jiang et al. Nat. Comms. 2022.
 
 All code written by Andrew C. Brown 2022.
 
+Note that photon energy is hardcoded as 0.06 a.u.
+
 For certain functions, the ionisation potential in a.u needs to be provided as
 an input argument (--ip). For others, the sideband index needs to be specified.
 The parameters for the figures in the paper are:
@@ -15,6 +17,10 @@ For Helium: Ip = 0.904 a.u. sb =18
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+
+photon_energy = 0.06
+debug_yield = False  # set to true to see sideband yields
+debug_fit = []  # list of angles for which we want to view the fits.
 
 
 def lighten_color(color, amount=0.5):
@@ -74,10 +80,10 @@ def mom_to_energy(Ip, mom):
     return zeniths
 
 
-def trim_dataframe_to_sb(Psi_phi, sb, Ip):
+def trim_dataframe_to_sb(Psi_phi, sb, Ip, refangle=0):
     """given a dataframe containing the photoelectron momenta, select only the
-    energies which lie within the given sideband. Assumes the photon energy is
-    0.06 a.u and the sideband is 0.01 a.u wide
+    energies which lie within the given sideband. Assumes the sideband is
+    0.01 a.u wide
     Parameters
     ==========
     Psi_phi: pd.DataFrame
@@ -88,6 +94,8 @@ def trim_dataframe_to_sb(Psi_phi, sb, Ip):
     Ip: float
         the ionisation energy. This is required to ensure the energy is
         calculated relative to the neutral ground state.
+    refangle: int
+        skew angle ΘT between the XUV-APT and IR
 
     Returns
     =======
@@ -95,7 +103,6 @@ def trim_dataframe_to_sb(Psi_phi, sb, Ip):
         dataframe containing the photoelectron momenta limited to energies
         within the sideband of interest.
     """
-    photon_energy = 0.06  # in a.u.
     sb_width = 0.01       # sideband summed over the range sb_energy ± sb_width
     sb_energy = sb*photon_energy  # energy of the sideband in a.u
     sb_lo = sb_energy - 2*sb_width
@@ -104,16 +111,24 @@ def trim_dataframe_to_sb(Psi_phi, sb, Ip):
     momenta = [float(x) for x in Psi_phi.columns]
     energies = mom_to_energy(Ip, momenta)
     filt = [(float(x) > sb_lo and float(x) < sb_hi) for x in energies]
-    ens = list(filter(lambda x: float(x) > sb_lo and float(x) < sb_hi, energies))
+    ens = list(filter(lambda x: float(x) >
+               sb_lo and float(x) < sb_hi, energies))
 
     Psi_phi = Psi_phi.loc[:, filt]
-    yy = []
-    for ii in range(16):
-        yy.append(np.sum(Psi_phi.iloc[ii*360+55]))
-        plt.plot(ens, Psi_phi.iloc[ii*360+55])
-        plt.ylim([0,3e-5])
+    if debug_yield:
+        yy = []
+        for ii in range(16):
+            yy.append(np.sum(Psi_phi.iloc[ii*360+refangle]))
+            plt.plot(ens, Psi_phi.iloc[ii*360+refangle])
+            plt.xlabel('Photon Energy (a.u.)')
+            plt.ylabel('Amplitude (arb. units)')
+            plt.title(f'sideband {sb} yield for time delay {ii+1} of 16')
+            plt.show()
+        plt.plot(np.arange(16), yy)
+        plt.xlabel('Time-delay index')
+        plt.ylabel('Sideband yield')
+        plt.title(f'Sideband {sb} yield as a function of time delay')
         plt.show()
-    plt.plot(np.arange(16),yy)
     return Psi_phi
 
 
@@ -122,7 +137,7 @@ def test_func(x, a, b, c, d):
     return a * np.cos(b * x + c) + d
 
 
-def getPhase(data, p0=[0, 2, 0, 0], ang=0):
+def getPhase(data, p0=[0, 2, 0, 0], ang=None):
     """
     fit the data and extract the phase. Use the parameters from the previous
     fit (p0) as the starting point for the fit.
@@ -141,11 +156,6 @@ def getPhase(data, p0=[0, 2, 0, 0], ang=0):
     """
     from scipy.optimize import curve_fit
 
-    # if the phase is getting large and positive, shift the starting point for
-    # the next fit to keep things from getting stuck
-#    if p0[2] > 1.2:
-#        p0[2] = p0[2] - np.pi
-
     bounds = ([-np.inf, 1.99, -2.0*np.pi, -np.inf],
               [np.inf, 2.01, 2.0*np.pi, np.inf])
 
@@ -155,11 +165,11 @@ def getPhase(data, p0=[0, 2, 0, 0], ang=0):
                                           data, p0=p0,
                                           bounds=bounds,
                                           maxfev=1e8, ftol=1e-14)
-#    if ang !=0:
-#        plt.plot(phase_delays, data, 'r.')
-#        plt.plot(phase_delays, test_func(np.array(phase_delays), *params))
-#        plt.title(ang)
-#        plt.show()
+    if ang in debug_fit:
+        plt.plot(phase_delays, data, 'r.')
+        plt.plot(phase_delays, test_func(np.array(phase_delays), *params))
+        plt.title(f'fitted sideband yield for angle {ang}')
+        plt.show()
     return params
 
 
@@ -215,14 +225,14 @@ def extract_phase(Psi_phi, refangle=None):
         phase.append(1/np.pi*p0[2])
         ratio.append(sum(y14[:, ii]) / maxyield)
 
-    p0 = getPhase(y14[:, 0], p0=p0)
-#     recalculate the phase at 0 degrees using the previous fit parameters
-#    phase = []
-#    ratio = []
-#    for ii in range(0, 360):
-#        p0 = getPhase(y14[:, ii], p0=p0,ang=ii)
-#        phase.append(1/np.pi*p0[2])
-#        ratio.append(sum(y14[:, ii]) / maxyield)
+# calculate the phase again using the previous fit parameters
+# (helps convergence)
+    phase = []
+    ratio = []
+    for ii in range(0, 360):
+        p0 = getPhase(y14[:, ii], p0=p0, ang=ii)
+        phase.append(1/np.pi*p0[2])
+        ratio.append(sum(y14[:, ii]) / maxyield)
     if refangle:
         refangle = int(refangle)
         refphase = phase[refangle]
@@ -233,8 +243,8 @@ def extract_phase(Psi_phi, refangle=None):
 
 def plot_phase(phi, ratio, args):
     """ show the extracted sideband phase as a function of emission angle as
-    either a polar or cartesian plot. If polar, weight the colour of the plotted
-    phase by the yield.
+    either a polar or cartesian plot. If polar, weight the colour of the
+    plotted phase by the yield.
 
     Parameters
     ==========
@@ -284,15 +294,7 @@ def PADphase(args):
     """
 
     Psi_phi = pd.read_csv(args['file'])
-    mom = [float(x) for x in Psi_phi.columns]
-    ens = mom_to_energy(args['ip'], mom)
-    plt.plot(ens, Psi_phi.iloc[55])
     Psi_phi = trim_dataframe_to_sb(Psi_phi, args['sb'], args['ip'])
-    plt.show()
-
-#    import sys
-#    sys.exit()
-
 
     phi, ratio = extract_phase(Psi_phi, args["angle"])
     if (phi):
@@ -350,13 +352,13 @@ def select_dist(fullPsi, sel=None):
     """
     fullPsi = np.transpose(fullPsi.values)
 
-    if not(sel):
+    if not (sel):
         Psi = 0
         for ii in range(16):
             Psi += fullPsi[:, ii*360:(ii+1)*360]
     else:
         Psi = fullPsi[:, sel*360:(sel+1)*360]
-    return(Psi)
+    return (Psi)
 
 
 def PADamp(args):
@@ -437,14 +439,13 @@ def rabbitt_phase(momenta, matdat, sb, ip=0):
         the sideband phase extracted from the fit to the rabbitt data
     """
 
-
     energies = mom_to_energy(ip, momenta)
     for ii, en in enumerate(energies):
-        if en> sb*0.06-0.01:
+        if en > sb*photon_energy-0.01:
             i_lo = ii
             break
     for ii, en in enumerate(energies):
-        if en> sb*0.06+0.01:
+        if en > sb*photon_energy+0.01:
             i_hi = ii
             break
     sbyield = []
