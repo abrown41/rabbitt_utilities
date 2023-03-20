@@ -52,7 +52,8 @@ paper by W. Jiang et al. Nat. Comms. 2022.""",
             'PADphase = src.PADphase:main',
             'PADamp = src.PADamp:main',
             'rabbitt = src.rabbitt:main',
-            'pwPhase = src.pwPhase:main'
+            'pwPhase = src.pwPhase:main',
+            'format_csv = src.format_csv:main'
         ],
     },
     include_package_data=True,

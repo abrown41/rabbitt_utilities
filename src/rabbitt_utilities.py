@@ -22,6 +22,26 @@ photon_energy = 0.06
 debug_yield = False  # set to true to see sideband yields
 debug_fit = []  # list of angles for which we want to view the fits.
 
+momentum_file_format = """
+The momentum file must be in comma-separated-variable format.
+
+Columns from left to right are increasing momentum
+
+The first line should contain the momentum values (assumed to be in a.u.)
+
+The next 360 lines contain the yield at each of 360 emission angles for the
+first time delay
+
+The next 360 lines contain the yield at each of 360 emission angles for the
+second time delay
+
+and so on...
+
+Thus the file should have 360*16 + 1 = 5761 lines.
+
+The utility format_csv is provided to fix this. (format_csv --help)
+"""
+
 
 def lighten_color(color, amount=0.5):
     """
@@ -65,8 +85,16 @@ def read_command_line():
     parser.add_argument('-s', '--sb', type=int,
                         help="sideband index",
                         default=18)
+    args = vars(parser.parse_args())
 
-    return vars(parser.parse_args())
+    with open(args['file'], 'r') as f:
+        lines = f.readlines()
+        if ("," not in lines[1]) or ((len(lines)-1) % 16 != 0):
+            raise IOError(
+                f"""Momentum file formatted incorrectly.
+                {momentum_file_format}""")
+
+    return args
 
 
 def mom_to_energy(Ip, mom):
