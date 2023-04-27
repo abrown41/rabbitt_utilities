@@ -77,6 +77,9 @@ def read_command_line():
     parser.add_argument('-o', '--output', type=str,
                         help="file for phase to be stored",
                         default="dontsaveme.txt")
+    parser.add_argument('-l', '--label', type=str,
+                        help="filename for angular phase image",
+                        default=None)
     parser.add_argument('-a', '--angle',
                         help="skew angle", default=None)
     parser.add_argument('-i', '--ip', type=float,
@@ -86,7 +89,7 @@ def read_command_line():
                         help="sideband index",
                         default=18)
     args = vars(parser.parse_args())
-
+    
     with open(args['file'], 'r') as f:
         lines = f.readlines()
         if ("," not in lines[1]) or ((len(lines)-1) % 16 != 0):
@@ -160,12 +163,12 @@ def trim_dataframe_to_sb(Psi_phi, sb, Ip, refangle=0):
     return Psi_phi
 
 
-def test_func(x, a, b, c, d):
+def test_func(x, a, b, c, d, e):
     """function with which to fit the sideband oscillation"""
-    return a * np.cos(b * x + c) + d
+    return a * np.cos(b * x + c) + d + e*x 
 
 
-def getPhase(data, p0=[0, 2, 0, 0], ang=None):
+def getPhase(data, p0=None, ang=None):
     """
     fit the data and extract the phase. Use the parameters from the previous
     fit (p0) as the starting point for the fit.
@@ -184,19 +187,37 @@ def getPhase(data, p0=[0, 2, 0, 0], ang=None):
     """
     from scipy.optimize import curve_fit
 
-    bounds = ([-np.inf, 1.99, -2.0*np.pi, -np.inf],
-              [np.inf, 2.01, 2.0*np.pi, np.inf])
+    scale = np.mean(data)
+    data_fits = data.copy()
+    data_fits /= scale
 
-    phase_delays = [i*np.pi/8 for i in range(16)]
+    if p0 is not None:
+        p0 = [2*np.mean(data_fits), 2, 0, np.mean(data_fits)/3, 0]
 
-    params, params_covariance = curve_fit(test_func, np.array(phase_delays),
-                                          data, p0=p0,
+    bounds = ([0, 1.99, -2*np.pi, -np.inf, -np.inf ],
+              [np.inf, 2.01, 2.0*np.pi, np.inf, np.inf])
+
+    phase_delays = [i*np.pi/8 for i in range(16)] 
+
+    params, params_covariance = curve_fit(test_func, 
+                                          np.array(phase_delays),
+                                          data_fits, 
+                                          p0=p0,
                                           bounds=bounds,
-                                          maxfev=1e8, ftol=1e-14)
+                                          maxfev=1e8, 
+                                          ftol=1e-14,
+                                          method='trf')
     if ang in debug_fit:
+        plt.figure()
+        print(ang, 'phase std:', np.sqrt(params_covariance[2,2]))
         plt.plot(phase_delays, data, 'r.')
-        plt.plot(phase_delays, test_func(np.array(phase_delays), *params))
-        plt.title(f'fitted sideband yield for angle {ang}')
+        plt.plot(phase_delays, test_func(np.array(phase_delays), *params)*scale)
+        plt.title(f'fitted sideband yield for angle {ang}\nphase={params[2]:.3f}')
+        plt.show()
+        plt.figure()
+        plt.plot(phase_delays, data - test_func(np.array(phase_delays), *params)*scale, 'x', label='residuals')
+        plt.title(f'residuals for {ang}deg')
+        plt.legend()
         plt.show()
     return params
 
@@ -234,9 +255,7 @@ def extract_phase(Psi_phi, refangle=None):
         tempsi = Psi[:, ii*360:(ii+1)*360]
         for jj in range(360):
             tempyield.append(np.sum(tempsi[:, jj]))
-
         yield14.append(tempyield)
-
     y14 = np.array(yield14)
     maxyield = 0
     for ii in range(360):
@@ -247,7 +266,7 @@ def extract_phase(Psi_phi, refangle=None):
     phase = []
     ratio = []
 
-    p0 = [0, 2, 0, 0]
+    p0 = [0, 2, 0, 0, 0]
     for ii in range(0, 360):
         p0 = getPhase(y14[:, ii], p0=p0)
         phase.append(1/np.pi*p0[2])
@@ -262,7 +281,7 @@ def extract_phase(Psi_phi, refangle=None):
         phase.append(1/np.pi*p0[2])
         ratio.append(sum(y14[:, ii]) / maxyield)
     if refangle:
-        refangle = int(refangle)
+        refangle = int(refangle)//2
         refphase = phase[refangle]
         phase = [p-refphase for p in phase]
     relative_yield = [ii/max(ratio) for ii in ratio]
@@ -291,9 +310,9 @@ def plot_phase(phi, ratio, args):
         for ang, phs, rat in zip(x, phi, ratio):
             ax.plot(ang, phs, '.', color=lighten_color('b', 2*rat))
         ax.set_theta_zero_location("S")
-#        ax.set_ylim([-1.2, 0.4])
+        ax.set_ylim([-1, 1])
         plt.title('$\Theta_T =$' + f'{args["angle"]}°')
-        plt.savefig(f'{args["angle"]}')
+        plt.savefig(args["label"] if (args["label"] is not None) else f'{args["angle"]}')
         plt.show()
     elif args["plot"]:
         plt.plot(x, phi)
@@ -323,7 +342,7 @@ def PADphase(args):
 
     Psi_phi = pd.read_csv(args['file'])
     Psi_phi = trim_dataframe_to_sb(Psi_phi, args['sb'], args['ip'])
-
+    
     phi, ratio = extract_phase(Psi_phi, args["angle"])
     if (phi):
         if args["output"] != "dontsaveme.txt":
@@ -480,7 +499,7 @@ def rabbitt_phase(momenta, matdat, sb, ip=0):
     for td in range(16):
         sbyield.append(np.sum(matdat[i_lo:i_hi, td]))
 
-    return getPhase(sbyield)[2]
+    return getPhase(sbyield, p0=[0, 2, 0, 0, 0])[2]
 
 
 def rabbitt(args):
