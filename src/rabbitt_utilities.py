@@ -429,12 +429,12 @@ def plot_phase(phi, ratio, args, is_4omega=False):
         fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
         #for ang, phs, rat in zip(x, phi, ratio):
         #    ax.plot(ang, phs, 'b.') #, color=lighten_color('b', 2*rat))
-        ax.plot(x, phi, 'b.', zorder=1)
+        ax.plot(-x, phi, 'b.', zorder=1)
         rad = np.linspace(1.15, 1.20, 2)
         r, th = np.meshgrid(rad, x)
         z = np.array([ratio, ratio]).T
-        plt.pcolormesh(th, r, z, zorder=2)
-        ax.set_theta_zero_location("N")
+        plt.pcolormesh(-th, r, z, zorder=2)
+        ax.set_theta_zero_location("S")
         ax.set_ylim([-1, 1.2])
         ax.grid(True, zorder=3)
         plt.title('$\Theta_T =$' + f'{args["angle"]}°')
