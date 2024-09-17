@@ -257,6 +257,17 @@ def test_func_onecos(x, a, c, d, e, is_4omega=False):
     else:
         return a * np.cos(2*x + c) + d + e*x 
 
+
+def fourier(data):
+    from scipy.fft import fft
+
+    y = fft(data)
+    comp = y[2]
+    phase2 = np.arctan2(np.imag(comp),np.real(comp))
+    comp = y[4]
+    phase4 = np.arctan2(np.imag(comp),np.real(comp))
+    return phase2, phase4
+
 def getPhase(data, p0=None, ang=None, num_delays=16):
     """
     fit the data and extract the phase. Use the parameters from the previous
@@ -296,6 +307,7 @@ def getPhase(data, p0=None, ang=None, num_delays=16):
 
     phase_delays = [i*2*np.pi/num_delays for i in range(num_delays)] 
 
+#    p2, p4 =fourier(data)
     params, params_covariance = curve_fit(test_func, 
                                           np.array(phase_delays),
                                           data_fits, 
@@ -304,6 +316,9 @@ def getPhase(data, p0=None, ang=None, num_delays=16):
                                           maxfev=1e8, 
                                           ftol=1e-14,
                                           method='trf')
+#    params[1] = p2
+#    params[3] = p4
+
     if ang in debug_fit:
         plt.figure()
         print(ang, 'phase 2w std:', np.sqrt(params_covariance[1,1]))
@@ -518,8 +533,8 @@ def plot_momentum(Psi, momenta):
     plt.figure(1, figsize=(8, 9))
     ax = plt.subplot(polar=True)
     ax.set_theta_zero_location("E")
-#    lup = 1.01*np.amax(Psi)
-    levels = np.linspace(0.0, 0.0011, 200)
+    lup = 1.01*np.amax(Psi)
+    levels = np.linspace(0.0, lup, 200)
     CS = plt.contourf(theta, r, Psi, levels, cmap=cm.jet)
     ax.set_rmax(2.0)
     rlabels = ax.get_ymajorticklabels()
